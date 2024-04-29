@@ -60,7 +60,7 @@ func main() {
 
 			// Skip any routes with TLS configured
 			if r.TLS.CertResolver != "" {
-				// TODO: use better indicator for TLS
+				// TODO: use a better indicator for TLS
 				continue
 			}
 
@@ -81,7 +81,7 @@ func main() {
 				}).Info("upserting tunnel")
 
 				ingress = append(ingress, cloudflare.TunnelConfigurationIngress{
-					Service:  os.Getenv("TRAEFIK_SERVICE_ENDPOINT"),
+					Service: os.Getenv("TRAEFIK_SERVICE_ENDPOINT"),
 					Hostname: domain,
 					OriginRequest: cloudflare.TunnelConfigurationIngressOriginRequest{
 						HTTPHostHeader: domain,
@@ -142,7 +142,7 @@ func updateTunnels(ctx context.Context, cf *cloudflare.API, ingress []cloudflare
 		TunnelID:  os.Getenv("CLOUDFLARE_TUNNEL_ID"),
 	})
 	if err != nil {
-		return fmt.Errorf("unable to pull current tunnel config, %s", err.Error())
+		return fmt.Errorf("unable to pull current tunnel config: %s", err.Error())
 	}
 
 	// Update config with new ingress rules
@@ -153,12 +153,12 @@ func updateTunnels(ctx context.Context, cf *cloudflare.API, ingress []cloudflare
 		Config:    cfg,
 	})
 	if err != nil {
-		return fmt.Errorf("unable to update tunnel config, %s", err.Error())
+		return fmt.Errorf("unable to update tunnel config: %s", err.Error())
 	}
 
 	log.Info("tunnel config updated")
 
-	// Update DNS to point to new tunnel
+	// Update DNS to point to the new tunnel
 	for _, i := range ingress {
 		if i.Hostname == "" {
 			continue
@@ -174,15 +174,16 @@ func updateTunnels(ctx context.Context, cf *cloudflare.API, ingress []cloudflare
 			Proxied: &proxied,
 		}
 
-		r, err := cf.DNSRecords(ctx, os.Getenv("CLOUDFLARE_ZONE_ID"), cloudflare.DNSRecord{Name: i.Hostname})
+		// Check if DNS record exists before creating or updating it
+		existingRecord, err := getExistingDNSRecord(ctx, cf, os.Getenv("CLOUDFLARE_ZONE_ID"), i.Hostname)
 		if err != nil {
-			return fmt.Errorf("err checking DNS records, %s", err.Error())
+			return fmt.Errorf("error checking DNS records: %s", err.Error())
 		}
 
-		if len(r) == 0 {
+		if existingRecord == nil {
 			_, err := cf.CreateDNSRecord(ctx, os.Getenv("CLOUDFLARE_ZONE_ID"), record)
 			if err != nil {
-				return fmt.Errorf("unable to create DNS record, %s", err.Error())
+				return fmt.Errorf("unable to create DNS record [%s]: %s", i.Hostname, err.Error())
 			}
 			log.WithFields(log.Fields{
 				"domain": record.Name,
@@ -190,10 +191,10 @@ func updateTunnels(ctx context.Context, cf *cloudflare.API, ingress []cloudflare
 			continue
 		}
 
-		if r[0].Content != record.Content {
-			err = cf.UpdateDNSRecord(ctx, os.Getenv("CLOUDFLARE_ZONE_ID"), r[0].ID, record)
+		if existingRecord.Content != record.Content {
+			err = cf.UpdateDNSRecord(ctx, os.Getenv("CLOUDFLARE_ZONE_ID"), existingRecord.ID, record)
 			if err != nil {
-				return fmt.Errorf("could not update record for %s, %s", i.Hostname, err)
+				return fmt.Errorf("could not update DNS record for %s: %s", i.Hostname, err.Error())
 			}
 			log.WithFields(log.Fields{
 				"domain": record.Name,
@@ -204,6 +205,19 @@ func updateTunnels(ctx context.Context, cf *cloudflare.API, ingress []cloudflare
 	// TODO: delete CNAME records with content that is _not_ in our list
 
 	return nil
+}
+
+func getExistingDNSRecord(ctx context.Context, cf *cloudflare.API, zoneID string, hostname string) (*cloudflare.DNSRecord, error) {
+	records, err := cf.DNSRecords(ctx, zoneID, cloudflare.DNSRecord{Name: hostname})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(records) > 0 {
+		return &records[0], nil
+	}
+
+	return nil, nil
 }
 
 func contains(s []string, e string) bool {

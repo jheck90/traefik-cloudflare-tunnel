@@ -54,7 +54,7 @@ dockers:
     dockerfile: Dockerfile
     build_flag_templates:
     - "--platform=linux/arm64/v8"
-  
+    
 docker_manifests:
   - name_template: "justmiles/traefik-cloudflare-tunnel:{{ .Version }}"
     image_templates:
