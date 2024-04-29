@@ -1,4 +1,4 @@
-module justmiles/traefik-cloudflare-tunnel
+module jheck90/traefik-cloudflare-tunnel
 
 go 1.17
 
